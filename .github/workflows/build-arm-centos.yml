@@ -46,7 +46,7 @@ jobs:
           docker save arm-centos79-java8-libreoffice:latest | gzip > arm-centos79-java8-libreoffice.tar.gz
 
       - name: Upload image as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: arm-centos79-java8-libreoffice
           path: arm-centos79-java8-libreoffice.tar.gz
