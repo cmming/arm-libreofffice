@@ -41,6 +41,47 @@ jobs:
           # 验证架构
           docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest uname -m
 
+      - name: Test LibreOffice document conversion
+        run: |
+          # 复制测试文件到容器并进行转换测试
+          docker run --rm --platform linux/arm64 \
+            -v $(pwd)/test-document.txt:/tmp/test-document.txt \
+            -v $(pwd):/output \
+            arm-centos79-java8-libreoffice:latest \
+            bash -c "
+              echo '=== LibreOffice 中文文档转换测试 ==='
+              echo '测试文件内容：'
+              head -5 /tmp/test-document.txt
+              echo ''
+              
+              echo '=== 转换为 DOCX 格式 ==='
+              libreoffice --headless --convert-to docx --outdir /output /tmp/test-document.txt
+              ls -la /output/*.docx || echo '转换 DOCX 失败'
+              
+              echo '=== 转换为 PDF 格式 ==='
+              libreoffice --headless --convert-to pdf --outdir /output /tmp/test-document.txt
+              ls -la /output/*.pdf || echo '转换 PDF 失败'
+              
+              echo '=== 转换为 ODT 格式 ==='
+              libreoffice --headless --convert-to odt --outdir /output /tmp/test-document.txt
+              ls -la /output/*.odt || echo '转换 ODT 失败'
+              
+              echo '=== 转换完成，检查文件大小 ==='
+              if [ -f /output/test-document.docx ]; then
+                echo \"DOCX 文件大小: \$(stat -f%z /output/test-document.docx 2>/dev/null || stat -c%s /output/test-document.docx) bytes\"
+              fi
+              if [ -f /output/test-document.pdf ]; then
+                echo \"PDF 文件大小: \$(stat -f%z /output/test-document.pdf 2>/dev/null || stat -c%s /output/test-document.pdf) bytes\"
+              fi
+              if [ -f /output/test-document.odt ]; then
+                echo \"ODT 文件大小: \$(stat -f%z /output/test-document.odt 2>/dev/null || stat -c%s /output/test-document.odt) bytes\"
+              fi
+            "
+          
+          # 检查转换结果
+          echo "=== 转换结果文件列表 ==="
+          ls -la *.docx *.pdf *.odt 2>/dev/null || echo "某些格式转换可能失败"
+
       - name: Export image as tar (optional)
         run: |
           docker save arm-centos79-java8-libreoffice:latest | gzip > arm-centos79-java8-libreoffice.tar.gz

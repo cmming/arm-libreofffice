@@ -11,8 +11,10 @@ RUN yum update -y && \
 # 安装 EPEL 仓库以获取 LibreOffice
 RUN yum install -y epel-release
 
-# 安装 LibreOffice
-RUN yum install -y libreoffice
+# 安装 LibreOffice 和中文字体支持
+RUN yum install -y libreoffice && \
+    yum groupinstall -y "Fonts" && \
+    yum install -y dejavu-fonts-common dejavu-sans-fonts dejavu-serif-fonts dejavu-sans-mono-fonts
 
 # 清理 yum 缓存以减小镜像大小
 RUN yum clean all && \
