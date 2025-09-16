@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # 基础镜像构建服务
+  base-image:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
+    image: arm-centos79-java8-libreoffice:latest
+    profiles:
+      - build
+
+  # Java 应用服务
+  java-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+      platforms:
+        - linux/arm64
+    image: my-java-app:latest
+    container_name: java-app-container
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - JAVA_OPTS=-Xms512m -Xmx1024m -XX:+UseG1GC -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai
+      - LANG=zh_CN.UTF-8
+      - LC_ALL=zh_CN.UTF-8
+    volumes:
+      # 可选：挂载配置文件
+      - ./config:/app/config:ro
+      # 可选：挂载日志目录
+      - ./logs:/app/logs
+      # 可选：挂载文档转换临时目录
+      - ./temp:/tmp/converts
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      - base-image
+    profiles:
+      - app
+
+  # 开发环境调试服务
+  java-app-dev:
+    extends: java-app
+    environment:
+      - PORT=8080
+      - JAVA_OPTS=-Xms256m -Xmx512m -XX:+UseG1GC -Dfile.encoding=UTF-8 -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+      - LANG=zh_CN.UTF-8
+      - LC_ALL=zh_CN.UTF-8
+    ports:
+      - "8080:8080"
+      - "5005:5005"  # Java 调试端口
+    volumes:
+      - ./java-app-example:/app/src:ro  # 挂载源代码用于开发
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+      - ./temp:/tmp/converts
+    profiles:
+      - dev
+
+# 可选：创建网络
+networks:
+  app-network:
+    driver: bridge
+
+# 可选：创建数据卷
+volumes:
+  app-logs:
+    driver: local
+  app-temp:
+    driver: local
