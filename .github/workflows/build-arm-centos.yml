@@ -1,0 +1,53 @@
+name: Build ARM CentOS 7.9 with Java8 and LibreOffice
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ARM64 CentOS 7.9 image
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --tag arm-centos79-java8-libreoffice:latest \
+            --load \
+            .
+
+      - name: Test the built image
+        run: |
+          # 测试 Java 8 安装
+          docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest java -version
+          
+          # 测试 LibreOffice 安装
+          docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest libreoffice --version
+          
+          # 验证架构
+          docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest uname -m
+
+      - name: Export image as tar (optional)
+        run: |
+          docker save arm-centos79-java8-libreoffice:latest | gzip > arm-centos79-java8-libreoffice.tar.gz
+
+      - name: Upload image as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: arm-centos79-java8-libreoffice
+          path: arm-centos79-java8-libreoffice.tar.gz
+          retention-days: 30
