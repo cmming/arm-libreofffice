@@ -1,5 +1,9 @@
 FROM arm64v8/centos:7.9.2009
 
+# 修复 CentOS 7 yum 仓库配置（使用归档仓库）
+RUN sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo && \
+    sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo
+
 # 安装 Java 8 (OpenJDK)
 RUN yum update -y && \
     yum install -y java-1.8.0-openjdk java-1.8.0-openjdk-devel
