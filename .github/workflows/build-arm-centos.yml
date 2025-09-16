@@ -41,6 +41,23 @@ jobs:
           # 验证架构
           docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest uname -m
 
+      - name: Test Chinese language support
+        run: |
+          docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest bash -c "
+            echo '=== 测试中文语言环境支持 ==='
+            echo '当前语言环境：'
+            locale
+            echo ''
+            echo '测试中文字符显示：'
+            echo '你好世界 Hello World 123'
+            echo ''
+            echo '已安装的中文字体：'
+            fc-list | grep -i 'zh\|cjk\|han\|noto\|wqy' | head -10 || echo '未找到中文字体'
+            echo ''
+            echo '字符集测试：'
+            python -c \"import sys; print('Python 默认编码:', sys.getdefaultencoding())\" 2>/dev/null || echo 'Python 未安装'
+          "
+
       - name: Test LibreOffice document conversion
         run: |
           # 复制测试文件到容器并进行转换测试
