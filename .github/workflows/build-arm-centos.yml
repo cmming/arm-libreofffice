@@ -91,6 +91,13 @@ jobs:
             org.opencontainers.image.description=ARM64 CentOS 7.9 Docker image with Java 8 and LibreOffice for document processing
             org.opencontainers.image.vendor=cmming
 
+      - name: Debug metadata outputs
+        run: |
+          echo "🔍 元数据步骤输出调试："
+          echo "tags: ${{ steps.meta.outputs.tags }}"
+          echo "labels: ${{ steps.meta.outputs.labels }}"
+          echo "json: ${{ steps.meta.outputs.json }}"
+
       - name: Build and push ARM64 CentOS 7.9 image
         id: build
         uses: docker/build-push-action@v5
@@ -116,7 +123,7 @@ jobs:
           # 构建器优化配置
           builder: ${{ steps.buildx.outputs.name }}
 
-  # 快速测试作业（并行）
+  # 快速测试作业（在构建完成后运行）
   quick-test:
     runs-on: ubuntu-latest
     needs: build
@@ -144,9 +151,26 @@ jobs:
         run: |
           echo "=== 快速功能验证 ==="
           
+          # 调试输出
+          echo "🔍 调试信息："
+          echo "构建输出: '${{ needs.build.outputs.image-tags }}'"
+          echo "事件类型: ${{ github.event_name }}"
+          
           # 获取第一个推送的镜像标签
-          IMAGE_TAG=$(echo '${{ needs.build.outputs.image-tags }}' | head -n1)
-          echo "测试镜像: $IMAGE_TAG"
+          TAGS_RAW='${{ needs.build.outputs.image-tags }}'
+          IMAGE_TAG=$(echo "$TAGS_RAW" | tr ',' '\n' | head -n1 | xargs)
+          echo "原始标签: $TAGS_RAW"
+          echo "解析的测试镜像: $IMAGE_TAG"
+          
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "❌ 错误：从构建作业获取的镜像标签为空"
+            echo "原始输出: '${{ needs.build.outputs.image-tags }}'"
+            echo "这可能是因为："
+            echo "1. 构建作业没有成功完成"
+            echo "2. outputs.image-tags 没有正确设置"
+            echo "3. 在 PR 模式下镜像没有推送"
+            exit 1
+          fi
           
           # 检查镜像标签是否为空
           if [ -z "$IMAGE_TAG" ]; then
@@ -180,10 +204,10 @@ jobs:
           
           echo "✅ 基础功能验证完成"
 
-  # 完整测试作业（仅在需要时运行）
+  # 完整测试作业（在快速测试通过后运行）
   full-test:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, quick-test]
     if: github.event_name == 'workflow_dispatch' && inputs.full_test
     steps:
       - name: Checkout repository
@@ -195,9 +219,11 @@ jobs:
 
       - name: Document conversion test (complete)
         run: |
-          IMAGE_TAG=$(echo '${{ needs.build.outputs.image-tags }}' | head -n1)
+          TAGS_RAW='${{ needs.build.outputs.image-tags }}'
+          IMAGE_TAG=$(echo "$TAGS_RAW" | tr ',' '\n' | head -n1 | xargs)
           
           echo "=== 文档转换功能测试（完整版）==="
+          echo "原始标签: $TAGS_RAW"
           echo "使用镜像: $IMAGE_TAG"
           
           # 检查镜像标签是否为空
