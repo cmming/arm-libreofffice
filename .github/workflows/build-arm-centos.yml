@@ -151,7 +151,10 @@ jobs:
           # 检查镜像标签是否为空
           if [ -z "$IMAGE_TAG" ]; then
             echo "❌ 错误: 镜像标签为空，无法进行测试"
-            echo "可用的镜像标签: ${{ needs.build.outputs.image-tags }}"
+            echo "构建输出调试信息:"
+            echo "  image-tags: ${{ needs.build.outputs.image-tags }}"
+            echo "  image-digest: ${{ needs.build.outputs.image-digest }}"
+            echo "  github.event_name: ${{ github.event_name }}"
             exit 1
           fi
           
