@@ -115,12 +115,6 @@ jobs:
             BUILDKIT_MULTI_PLATFORM=1
           # 构建器优化配置
           builder: ${{ steps.buildx.outputs.name }}
-          # 启用更激进的并行构建
-          allow: |
-            network.host
-            security.insecure
-          # 优化网络配置用于 ARM64 模拟
-          network: host
 
   # 快速测试作业（并行）
   quick-test:
