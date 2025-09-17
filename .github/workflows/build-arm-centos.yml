@@ -22,28 +22,58 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build ARM64 CentOS 7.9 image
-        run: |
-          docker buildx build \
-            --platform linux/arm64 \
-            --tag arm-centos79-java8-libreoffice:latest \
-            --load \
-            .
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=stable
+          labels: |
+            org.opencontainers.image.title=ARM CentOS 7.9 with Java 8 and LibreOffice
+            org.opencontainers.image.description=ARM64 CentOS 7.9 Docker image with Java 8 and LibreOffice for document processing
+            org.opencontainers.image.vendor=cmming
+
+      - name: Build and push ARM64 CentOS 7.9 image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Test the built image
         run: |
+          # 拉取刚构建的镜像进行测试
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest || \
+          docker tag arm-centos79-java8-libreoffice:latest ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest
+          
           # 测试 Java 8 安装
-          docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest java -version
+          docker run --rm --platform linux/arm64 ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest java -version
           
           # 测试 LibreOffice 安装
-          docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest libreoffice --version
+          docker run --rm --platform linux/arm64 ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest libreoffice --version
           
           # 验证架构
-          docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest uname -m
+          docker run --rm --platform linux/arm64 ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest uname -m
 
       - name: Test Chinese language support
         run: |
-          docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest bash -c "
+          docker run --rm --platform linux/arm64 ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest bash -c "
             echo '=== 测试中文语言环境支持 ==='
             echo '当前语言环境：'
             locale
@@ -64,7 +94,7 @@ jobs:
           docker run --rm --platform linux/arm64 \
             -v $(pwd)/test-document.txt:/tmp/test-document.txt \
             -v $(pwd):/output \
-            arm-centos79-java8-libreoffice:latest \
+            ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest \
             bash -c "
               echo '=== LibreOffice 中文文档转换测试 ==='
               echo '测试文件内容：'
@@ -100,12 +130,24 @@ jobs:
           ls -la *.docx *.pdf *.odt 2>/dev/null || echo "某些格式转换可能失败"
 
       - name: Export image as tar (optional)
+        if: github.event_name == 'workflow_dispatch'
         run: |
-          docker save arm-centos79-java8-libreoffice:latest | gzip > arm-centos79-java8-libreoffice.tar.gz
+          docker save ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest | gzip > arm-centos79-java8-libreoffice.tar.gz
 
       - name: Upload image as artifact
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: arm-centos79-java8-libreoffice
           path: arm-centos79-java8-libreoffice.tar.gz
           retention-days: 30
+
+      - name: Update Docker Hub description
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: peter-evans/dockerhub-description@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice
+          short-description: ARM64 CentOS 7.9 with Java 8 and LibreOffice for document processing
+          readme-filepath: ./README.md

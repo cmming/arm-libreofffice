@@ -9,16 +9,19 @@
 - Java 版本：OpenJDK 8
 - 办公软件：LibreOffice
 
-## 构建方法
+## 获取镜像
 
-### 1. 使用 GitHub Actions 自动构建
+### 从 Docker Hub 拉取（推荐）
 
-1. Fork 或克隆此仓库
-2. 在 GitHub 仓库的 Actions 标签页中，点击 "Build ARM CentOS 7.9 with Java8 and LibreOffice" 工作流
-3. 点击 "Run workflow" 按钮手动触发构建
-4. 构建完成后，可以在 Artifacts 中下载生成的 Docker 镜像 tar.gz 文件
+```bash
+# 拉取最新版本
+docker pull cmming/arm-centos79-java8-libreoffice:latest
 
-### 2. 本地构建（需要支持 ARM64 模拟）
+# 拉取稳定版本  
+docker pull cmming/arm-centos79-java8-libreoffice:stable
+```
+
+### 本地构建
 
 ```bash
 # 克隆仓库
@@ -29,22 +32,45 @@ cd arm-libreofffice
 docker buildx build --platform linux/arm64 -t arm-centos79-java8-libreoffice:latest .
 ```
 
+## 推送到 Docker Hub
+
+详细的推送指南请查看 [DOCKER-HUB-GUIDE.md](DOCKER-HUB-GUIDE.md)
+
+### GitHub Actions 自动推送
+
+1. 在 GitHub 仓库设置中添加 Secrets：
+   - `DOCKERHUB_USERNAME`: 你的 Docker Hub 用户名
+   - `DOCKERHUB_TOKEN`: 你的 Docker Hub 访问令牌
+
+2. 推送代码到 main 分支即可自动构建并推送到 Docker Hub
+
+### 本地手动推送
+
+```bash
+# 使用推送脚本
+./push-to-dockerhub.sh your-dockerhub-username
+
+# 或手动推送
+docker tag arm-centos79-java8-libreoffice:latest your-username/arm-centos79-java8-libreoffice:latest
+docker push your-username/arm-centos79-java8-libreoffice:latest
+```
+
 ## 使用方法
 
 ### 运行容器
 
 ```bash
-# 交互式运行容器
-docker run -it --platform linux/arm64 arm-centos79-java8-libreoffice:latest
+# 从 Docker Hub 拉取并运行
+docker run -it --platform linux/arm64 cmming/arm-centos79-java8-libreoffice:latest
 
 # 验证 Java 安装
-docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest java -version
+docker run --rm --platform linux/arm64 cmming/arm-centos79-java8-libreoffice:latest java -version
 
 # 验证 LibreOffice 安装
-docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest libreoffice --version
+docker run --rm --platform linux/arm64 cmming/arm-centos79-java8-libreoffice:latest libreoffice --version
 
 # 验证架构
-docker run --rm --platform linux/arm64 arm-centos79-java8-libreoffice:latest uname -m
+docker run --rm --platform linux/arm64 cmming/arm-centos79-java8-libreoffice:latest uname -m
 ```
 
 ### 导入下载的镜像
@@ -86,17 +112,40 @@ GitHub Actions 工作流会在以下情况下自动触发构建：
 #### 1. 构建和运行 Java 应用
 
 ```bash
-# 1. 构建基础镜像
+```bash
+# 构建基础镜像
 docker build --platform linux/arm64 -t arm-centos79-java8-libreoffice .
 
-# 2. 编译 Java 应用（可选，已提供示例）
-./build-java-app.sh
+# 或从 Docker Hub 拉取
+docker pull cmming/arm-centos79-java8-libreoffice:latest
 
-# 3. 构建应用镜像
+# 构建应用镜像
 docker build --platform linux/arm64 -f Dockerfile.app -t my-java-app .
 
-# 4. 运行应用
+# 运行应用
 docker run -p 8080:8080 --platform linux/arm64 my-java-app
+```
+
+#### 2. 使用 Docker Compose（推荐）
+
+更新 docker-compose.yml 中的镜像名称：
+
+```yaml
+services:
+  java-app:
+    image: cmming/arm-centos79-java8-libreoffice:latest
+    # ... 其他配置
+```
+
+然后运行：
+
+```bash
+# 构建并启动应用
+docker-compose --profile app up --build
+
+# 开发环境（包含调试端口）
+docker-compose --profile dev up --build
+```
 ```
 
 #### 2. 使用 Docker Compose（推荐）
@@ -156,20 +205,26 @@ JAVA_OPTS="-Xms512m -Xmx1024m -XX:+UseG1GC -XX:+UseContainerSupport -Dfile.encod
 
 1. **替换 Java 应用**：
    ```dockerfile
-   # 在 Dockerfile.app 中
+   # 在 Dockerfile.app 中使用 Docker Hub 镜像
+   FROM cmming/arm-centos79-java8-libreoffice:latest
+   
    COPY --chown=appuser:appuser your-app.jar app.jar
    ```
 
-2. **添加依赖**：
-   ```dockerfile
-   # 在基础镜像中添加额外软件
-   RUN yum install -y your-package
+2. **直接使用镜像**：
+   ```bash
+   # 运行你的 Java 应用
+   docker run -v /path/to/your/app.jar:/app/app.jar \
+              -p 8080:8080 --platform linux/arm64 \
+              cmming/arm-centos79-java8-libreoffice:latest \
+              java -jar /app/app.jar
    ```
 
-3. **修改配置**：
-   ```bash
-   # 编辑 config/application.properties
-   # 或通过环境变量覆盖
+3. **添加依赖**：
+   ```dockerfile
+   # 基于现有镜像添加额外软件
+   FROM cmming/arm-centos79-java8-libreoffice:latest
+   RUN yum install -y your-package
    ```
 
 ### 📊 性能考虑
