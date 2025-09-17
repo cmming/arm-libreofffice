@@ -17,7 +17,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      image-tags: ${{ steps.meta.outputs.tags }}
       image-digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout repository
@@ -116,9 +115,10 @@ jobs:
           # 构建器优化配置
           builder: ${{ steps.buildx.outputs.name }}
 
-      - name: Final output verification
+      - name: Build completion verification
         run: |
-          echo "✅ 推送的镜像标签: ${{ steps.meta.outputs.tags }}"
+          echo "✅ ARM64 镜像构建完成"
+          echo "✅ 推送标签: ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest"
           echo "✅ 镜像摘要: ${{ steps.build.outputs.digest }}"
 
   # 快速测试作业（在构建完成后运行）
@@ -127,20 +127,6 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request'
     steps:
-      - name: Checkout repository  
-        uses: actions/checkout@v4
-
-      # 缓存测试环境
-      - name: Cache test environment
-        uses: actions/cache@v4
-        with:
-          path: |
-            /tmp/.buildx-cache
-            ~/.docker
-          key: test-env-${{ runner.os }}-${{ hashFiles('Dockerfile') }}
-          restore-keys: |
-            test-env-${{ runner.os }}-
-
       - name: Set up QEMU and binfmt
         run: |
           docker run --rm --privileged tonistiigi/binfmt --install arm64
@@ -171,15 +157,12 @@ jobs:
           
           echo "✅ 快速验证完成"
 
-  # 完整测试作业（在快速测试通过后运行）
+  # 完整测试作业（手动触发时选择或push到main分支时）
   full-test:
     runs-on: ubuntu-latest
     needs: [build, quick-test]
-    if: github.event_name == 'workflow_dispatch' && inputs.full_test
+    if: (github.event_name == 'workflow_dispatch' && inputs.full_test) || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Set up QEMU and binfmt
         run: |
           docker run --rm --privileged tonistiigi/binfmt --install arm64
@@ -225,11 +208,11 @@ jobs:
           path: test-output/
           retention-days: 7
 
-  # 更新 Docker Hub 描述（手动触发时）
+  # 更新 Docker Hub 描述（手动触发或push到main分支时）
   update-description:
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
