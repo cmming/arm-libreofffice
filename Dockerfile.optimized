@@ -47,3 +47,5 @@ RUN fc-cache -fv && \
     echo "中文测试: 你好世界" && \
     echo "✅ 所有组件安装和验证完成"
 
+# 设置默认命令
+CMD ["/bin/bash"]

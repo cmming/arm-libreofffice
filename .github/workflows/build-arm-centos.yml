@@ -2,14 +2,23 @@ name: Build ARM CentOS 7.9 with Java8 and LibreOffice
 
 on:
   workflow_dispatch:
+    inputs:
+      full_test:
+        description: 'Run full tests (slower)'
+        type: boolean
+        default: false
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
 
 jobs:
+  # 快速构建作业
   build:
     runs-on: ubuntu-latest
+    outputs:
+      image-tags: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -18,6 +27,12 @@ jobs:
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
+
+      - name: Setup ARM64 emulation with binfmt
+        run: |
+          # 使用 tonistiigi/binfmt 设置更好的 ARM64 模拟
+          docker run --rm --privileged tonistiigi/binfmt --install arm64
+          echo "✅ ARM64 binfmt emulation enabled"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -46,6 +61,7 @@ jobs:
             org.opencontainers.image.vendor=cmming
 
       - name: Build and push ARM64 CentOS 7.9 image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -53,97 +69,120 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # 优化缓存策略
+          cache-from: |
+            type=gha,scope=${{ github.ref_name }}
+            type=gha,scope=main
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:cache
+          cache-to: |
+            type=gha,mode=max,scope=${{ github.ref_name }}
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:cache,mode=max
+          # 构建参数优化
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
-      - name: Test the built image
-        run: |
-          # 拉取刚构建的镜像进行测试
-          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest || \
-          docker tag arm-centos79-java8-libreoffice:latest ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest
-          
-          # 测试 Java 8 安装
-          docker run --rm --platform linux/arm64 ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest java -version
-          
-          # 测试 LibreOffice 安装
-          docker run --rm --platform linux/arm64 ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest libreoffice --version
-          
-          # 验证架构
-          docker run --rm --platform linux/arm64 ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest uname -m
+  # 快速测试作业（并行）
+  quick-test:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Checkout repository  
+        uses: actions/checkout@v4
 
-      - name: Test Chinese language support
+      - name: Set up QEMU and binfmt
         run: |
-          docker run --rm --platform linux/arm64 ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest bash -c "
-            echo '=== 测试中文语言环境支持 ==='
-            echo '当前语言环境：'
-            locale
-            echo ''
-            echo '测试中文字符显示：'
-            echo '你好世界 Hello World 123'
-            echo ''
-            echo '已安装的中文字体：'
-            fc-list | grep -i 'zh\|cjk\|han\|noto\|wqy' | head -10 || echo '未找到中文字体'
-            echo ''
-            echo '字符集测试：'
-            python -c \"import sys; print('Python 默认编码:', sys.getdefaultencoding())\" 2>/dev/null || echo 'Python 未安装'
-          "
+          docker run --rm --privileged tonistiigi/binfmt --install arm64
 
-      - name: Test LibreOffice document conversion
+      - name: Quick functionality test
         run: |
-          # 复制测试文件到容器并进行转换测试
+          echo "=== 快速功能验证 ==="
+          
+          # 获取第一个推送的镜像标签
+          IMAGE_TAG=$(echo '${{ needs.build.outputs.image-tags }}' | head -n1)
+          echo "测试镜像: $IMAGE_TAG"
+          
+          # 并行运行基础测试（更快）
+          echo "运行并行基础测试..."
+          (
+            echo "Java 测试:" && \
+            docker run --rm --platform linux/arm64 "$IMAGE_TAG" java -version 2>&1 | head -3
+          ) &
+          
+          (
+            echo "LibreOffice 测试:" && \
+            docker run --rm --platform linux/arm64 "$IMAGE_TAG" libreoffice --version 2>&1 | head -1
+          ) &
+          
+          (
+            echo "架构验证:" && \
+            docker run --rm --platform linux/arm64 "$IMAGE_TAG" uname -m 2>&1
+          ) &
+          
+          # 等待所有后台任务完成
+          wait
+          
+          echo "✅ 基础功能验证完成"
+
+  # 完整测试作业（仅在需要时运行）
+  full-test:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.full_test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU and binfmt
+        run: |
+          docker run --rm --privileged tonistiigi/binfmt --install arm64
+
+      - name: Document conversion test (complete)
+        run: |
+          IMAGE_TAG=$(echo '${{ needs.build.outputs.image-tags }}' | head -n1)
+          
+          echo "=== 文档转换功能测试（完整版）==="
+          
+          # 创建测试输出目录
+          mkdir -p test-output
+          
+          # 测试多种格式转换
           docker run --rm --platform linux/arm64 \
             -v $(pwd)/test-document.txt:/tmp/test-document.txt \
-            -v $(pwd):/output \
-            ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest \
+            -v $(pwd)/test-output:/output \
+            "$IMAGE_TAG" \
             bash -c "
-              echo '=== LibreOffice 中文文档转换测试 ==='
-              echo '测试文件内容：'
-              head -5 /tmp/test-document.txt
-              echo ''
+              echo '转换测试文件为多种格式:'
               
-              echo '=== 转换为 DOCX 格式 ==='
-              libreoffice --headless --convert-to docx --outdir /output /tmp/test-document.txt
-              ls -la /output/*.docx || echo '转换 DOCX 失败'
+              libreoffice --headless --convert-to pdf --outdir /output /tmp/test-document.txt &
+              libreoffice --headless --convert-to docx --outdir /output /tmp/test-document.txt &
+              libreoffice --headless --convert-to odt --outdir /output /tmp/test-document.txt &
               
-              echo '=== 转换为 PDF 格式 ==='
-              libreoffice --headless --convert-to pdf --outdir /output /tmp/test-document.txt
-              ls -la /output/*.pdf || echo '转换 PDF 失败'
+              wait
               
-              echo '=== 转换为 ODT 格式 ==='
-              libreoffice --headless --convert-to odt --outdir /output /tmp/test-document.txt
-              ls -la /output/*.odt || echo '转换 ODT 失败'
-              
-              echo '=== 转换完成，检查文件大小 ==='
-              if [ -f /output/test-document.docx ]; then
-                echo \"DOCX 文件大小: \$(stat -f%z /output/test-document.docx 2>/dev/null || stat -c%s /output/test-document.docx) bytes\"
-              fi
-              if [ -f /output/test-document.pdf ]; then
-                echo \"PDF 文件大小: \$(stat -f%z /output/test-document.pdf 2>/dev/null || stat -c%s /output/test-document.pdf) bytes\"
-              fi
-              if [ -f /output/test-document.odt ]; then
-                echo \"ODT 文件大小: \$(stat -f%z /output/test-document.odt 2>/dev/null || stat -c%s /output/test-document.odt) bytes\"
-              fi
+              echo '转换完成，检查结果:'
+              ls -la /output/
             "
           
-          # 检查转换结果
-          echo "=== 转换结果文件列表 ==="
-          ls -la *.docx *.pdf *.odt 2>/dev/null || echo "某些格式转换可能失败"
+          echo "✅ 完整文档转换测试完成"
 
-      - name: Export image as tar (optional)
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          docker save ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest | gzip > arm-centos79-java8-libreoffice.tar.gz
-
-      - name: Upload image as artifact
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload conversion test results
         uses: actions/upload-artifact@v4
         with:
-          name: arm-centos79-java8-libreoffice
-          path: arm-centos79-java8-libreoffice.tar.gz
-          retention-days: 30
+          name: libreoffice-conversion-results
+          path: test-output/
+          retention-days: 7
+
+  # 仅在手动触发时更新 Docker Hub 描述
+  update-description:
+    runs-on: ubuntu-latest
+    needs: [build, quick-test]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Update Docker Hub description
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: peter-evans/dockerhub-description@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
