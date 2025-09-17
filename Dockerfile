@@ -1,49 +1,63 @@
 FROM arm64v8/centos:7.9.2009
 
-# 修复 CentOS 7 yum 仓库配置（使用归档仓库）
-RUN sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo && \
-    sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo
+# 设置构建时优化环境变量
+ENV BUILDKIT_INLINE_CACHE=1
 
-# 一次性安装所有必需软件包以减少层数和网络请求
-RUN yum update -y && \
+# 修复 CentOS 7 yum 仓库配置（使用归档仓库）并优化 yum 性能
+RUN set -ex && \
+    sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo && \
+    sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo && \
+    # yum 性能优化配置
+    echo "fastestmirror=1" >> /etc/yum.conf && \
+    echo "deltarpm=0" >> /etc/yum.conf && \
+    echo "keepcache=0" >> /etc/yum.conf && \
+    echo "max_parallel_downloads=8" >> /etc/yum.conf && \
+    yum clean all
+
+# 一次性安装所有必需软件包（最关键的缓存层）
+RUN set -ex && \
+    yum update -y && \
+    # 基础工具和 Java 8
     yum install -y \
-        # 基础工具
         glibc-common wget curl tar \
-        # Java 8
         java-1.8.0-openjdk java-1.8.0-openjdk-devel \
-        # EPEL 仓库
         epel-release && \
-    # 重新安装 glibc-common 确保语言环境
+    # 重新安装并设置语言环境
     yum reinstall -y glibc-common && \
-    # 设置中文语言环境
     localedef -c -f UTF-8 -i zh_CN zh_CN.UTF-8 && \
     localedef -c -f UTF-8 -i en_US en_US.UTF-8 && \
-    # 安装 LibreOffice 和所有字体（一次性完成）
+    # LibreOffice 安装（一次性完成）
     yum install -y libreoffice && \
-    yum groupinstall -y "Fonts" && \
+    # 字体包安装（并行处理错误）
+    yum groupinstall -y "Fonts" 2>/dev/null || true && \
     yum install -y \
         dejavu-fonts-common dejavu-sans-fonts dejavu-serif-fonts dejavu-sans-mono-fonts \
-        wqy-microhei-fonts wqy-zenhei-fonts \
+        wqy-microhei-fonts wqy-zenhei-fonts 2>/dev/null || true && \
+    yum install -y \
         google-noto-sans-cjk-ttc-fonts google-noto-serif-cjk-ttc-fonts \
         cjkuni-uming-fonts cjkuni-ukai-fonts 2>/dev/null || true && \
-    # 清理缓存（减少镜像大小）
+    # 立即清理缓存减少层大小
     yum clean all && \
-    rm -rf /var/cache/yum /tmp/*
+    rm -rf /var/cache/yum /tmp/* /var/tmp/*
 
-# 设置环境变量（合并到一层）
+# 设置环境变量
 ENV LANG=zh_CN.UTF-8 \
     LC_ALL=zh_CN.UTF-8 \
     LANGUAGE=zh_CN:zh \
     LC_CTYPE=zh_CN.UTF-8 \
-    JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
+    JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk \
+    PATH=${PATH}:${JAVA_HOME}/bin
 
-# 更新字体缓存并验证安装（最后一层）
-RUN fc-cache -fv && \
-    # 验证安装（构建时验证，减少运行时测试）
-    java -version && \
-    libreoffice --version && \
-    echo "Architecture: $(uname -m)" && \
-    echo "Locale: $LANG" && \
-    echo "中文测试: 你好世界" && \
-    echo "✅ 所有组件安装和验证完成"
+# 字体缓存更新和最终验证（快速完成的层）
+RUN set -ex && \
+    fc-cache -fv && \
+    # 构建时验证（减少日志输出）
+    java -version >/dev/null 2>&1 && \
+    libreoffice --version >/dev/null 2>&1 && \
+    echo "✅ ARM64 构建完成: $(uname -m)" && \
+    echo "✅ 语言环境: $LANG" && \
+    rm -rf /tmp/* /var/tmp/*
+
+# 设置工作目录
+WORKDIR /app
 

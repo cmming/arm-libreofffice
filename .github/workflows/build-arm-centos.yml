@@ -28,6 +28,15 @@ jobs:
         with:
           platforms: arm64
 
+      # 缓存 QEMU 二进制文件
+      - name: Cache QEMU binaries
+        uses: actions/cache@v4
+        with:
+          path: /usr/bin/qemu-*
+          key: qemu-${{ runner.os }}-${{ runner.arch }}
+          restore-keys: |
+            qemu-${{ runner.os }}-
+
       - name: Setup ARM64 emulation with binfmt
         run: |
           # 使用 tonistiigi/binfmt 设置更好的 ARM64 模拟
@@ -35,7 +44,29 @@ jobs:
           echo "✅ ARM64 binfmt emulation enabled"
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          # 启用实验性特性以提升 ARM64 构建性能
+          driver-opts: |
+            network=host
+            env.BUILDKIT_STEP_LOG_MAX_SIZE=50000000
+            env.BUILDKIT_STEP_LOG_MAX_SPEED=100000000
+          # 使用本地构建器提升性能
+          use: true
+          # 启用更多并发特性
+          buildkitd-flags: |
+            --allow-insecure-entitlement=network.host
+            --allow-insecure-entitlement=security.insecure
+
+      # 缓存 Docker Buildx 状态
+      - name: Cache Docker Buildx state
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            buildx-${{ runner.os }}-
 
       - name: Login to Docker Hub
         if: github.event_name != 'pull_request'
@@ -69,17 +100,27 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # 优化缓存策略
+          # 优化缓存策略 - 多级缓存
           cache-from: |
-            type=gha,scope=${{ github.ref_name }}
-            type=gha,scope=main
-            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:cache
+            type=gha,scope=build-${{ github.ref_name }}
+            type=gha,scope=build-main
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:buildcache-${{ github.ref_name }}
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:buildcache-main
           cache-to: |
-            type=gha,mode=max,scope=${{ github.ref_name }}
-            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:cache,mode=max
-          # 构建参数优化
+            type=gha,mode=max,scope=build-${{ github.ref_name }}
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:buildcache-${{ github.ref_name }},mode=max
+          # ARM64 构建优化参数
           build-args: |
             BUILDKIT_INLINE_CACHE=1
+            BUILDKIT_MULTI_PLATFORM=1
+          # 构建器优化配置
+          builder: ${{ steps.buildx.outputs.name }}
+          # 启用更激进的并行构建
+          allow: |
+            network.host
+            security.insecure
+          # 优化网络配置用于 ARM64 模拟
+          network: host
 
   # 快速测试作业（并行）
   quick-test:
@@ -89,6 +130,17 @@ jobs:
     steps:
       - name: Checkout repository  
         uses: actions/checkout@v4
+
+      # 缓存测试环境
+      - name: Cache test environment
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/.buildx-cache
+            ~/.docker
+          key: test-env-${{ runner.os }}-${{ hashFiles('Dockerfile') }}
+          restore-keys: |
+            test-env-${{ runner.os }}-
 
       - name: Set up QEMU and binfmt
         run: |
@@ -101,6 +153,13 @@ jobs:
           # 获取第一个推送的镜像标签
           IMAGE_TAG=$(echo '${{ needs.build.outputs.image-tags }}' | head -n1)
           echo "测试镜像: $IMAGE_TAG"
+          
+          # 检查镜像标签是否为空
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "❌ 错误: 镜像标签为空，无法进行测试"
+            echo "可用的镜像标签: ${{ needs.build.outputs.image-tags }}"
+            exit 1
+          fi
           
           # 并行运行基础测试（更快）
           echo "运行并行基础测试..."
@@ -142,6 +201,35 @@ jobs:
           IMAGE_TAG=$(echo '${{ needs.build.outputs.image-tags }}' | head -n1)
           
           echo "=== 文档转换功能测试（完整版）==="
+          echo "使用镜像: $IMAGE_TAG"
+          
+          # 检查镜像标签是否为空
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "❌ 错误: 镜像标签为空，无法进行测试"
+            echo "可用的镜像标签: ${{ needs.build.outputs.image-tags }}"
+            exit 1
+          fi
+          
+          # 创建测试文档
+          echo "创建测试文档..."
+          cat > test-document.txt << 'EOF'
+          ARM64 CentOS LibreOffice 测试文档
+          
+          这是一个用于测试文档转换功能的示例文件。
+          
+          测试内容：
+          1. 中文字符支持测试：你好世界
+          2. 英文字符支持测试：Hello World
+          3. 数字支持测试：1234567890
+          4. 特殊字符测试：@#$%^&*()
+          
+          构建架构：ARM64 (aarch64)
+          操作系统：CentOS 7.9.2009  
+          Java 版本：OpenJDK 1.8
+          LibreOffice 版本：5.3.6.1
+          
+          测试时间：$(date)
+          EOF
           
           # 创建测试输出目录
           mkdir -p test-output
@@ -162,6 +250,16 @@ jobs:
               
               echo '转换完成，检查结果:'
               ls -la /output/
+              
+              echo '验证文件大小:'
+              for file in /output/*; do
+                if [ -f \"\$file\" ]; then
+                  size=\$(stat -c%s \"\$file\")
+                  echo \"✅ \$(basename \$file): \$size 字节\"
+                else
+                  echo \"❌ 文件不存在: \$file\"
+                fi
+              done
             "
           
           echo "✅ 完整文档转换测试完成"
