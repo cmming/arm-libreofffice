@@ -149,28 +149,25 @@ jobs:
         run: |
           echo "=== 快速功能验证 ==="
           
-          # 获取镜像标签
-          IMAGE_TAG='${{ needs.build.outputs.image-tags }}'
+          # 直接使用已知的镜像标签
+          IMAGE_TAG='${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest'
           echo "🔍 使用镜像: $IMAGE_TAG"
           
-          if [ -z "$IMAGE_TAG" ]; then
-            echo "❌ 错误：镜像标签为空"
-            exit 1
-          fi
+          echo "🧪 运行测试..."
           
-          echo "🧪 运行并行测试..."
+          # 先测试镜像是否可访问
+          echo "🔍 验证镜像可访问性..."
+          docker run --rm --platform linux/arm64 "$IMAGE_TAG" echo "镜像访问成功"
           
-          # Java 版本检查
-          docker run --rm --platform linux/arm64 "$IMAGE_TAG" java -version &
+          # 顺序执行测试以便调试
+          echo "☕ Java 版本检查:"
+          docker run --rm --platform linux/arm64 "$IMAGE_TAG" java -version
           
-          # LibreOffice 版本检查  
-          docker run --rm --platform linux/arm64 "$IMAGE_TAG" libreoffice --version &
+          echo "📄 LibreOffice 版本检查:"
+          docker run --rm --platform linux/arm64 "$IMAGE_TAG" libreoffice --version
           
-          # 架构验证
-          docker run --rm --platform linux/arm64 "$IMAGE_TAG" uname -m &
-          
-          # 等待所有测试完成
-          wait
+          echo "🏗️ 架构验证:"
+          docker run --rm --platform linux/arm64 "$IMAGE_TAG" uname -m
           
           echo "✅ 快速验证完成"
 
@@ -189,14 +186,10 @@ jobs:
 
       - name: Document conversion test (complete)
         run: |
-          IMAGE_TAG='${{ needs.build.outputs.image-tags }}'
+          # 直接使用已知的镜像标签
+          IMAGE_TAG='${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest'
           echo "=== 文档转换功能测试 ==="
           echo "🔍 使用镜像: $IMAGE_TAG"
-          
-          if [ -z "$IMAGE_TAG" ]; then
-            echo "❌ 错误: 镜像标签为空"
-            exit 1
-          fi
           
           # 创建简单测试文档
           cat > test.txt << 'EOF'
