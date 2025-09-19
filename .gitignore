@@ -24,3 +24,10 @@ Thumbs.db
 # 应用运行时文件
 *.pid
 *.sock
+
+# java 相关
+target/
+*.jar
+*.war
+*.ear
+*.jks
