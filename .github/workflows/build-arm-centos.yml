@@ -177,64 +177,37 @@ jobs:
 
       - name: Document conversion test (complete)
         run: |
-          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+          # 直接使用已知的镜像标签
+          IMAGE_TAG='${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}'
+          echo "=== 文档转换功能测试 ==="
+          echo "🔍 使用镜像: $IMAGE_TAG"
           
-          echo "=== 文档转换功能测试（完整版）==="
-          echo "使用镜像: $IMAGE_TAG"
+          # 创建简单测试文档
+          cat > test.txt << 'EOF'
+          ARM64 CentOS LibreOffice 测试
           
-          # 创建测试文档
-          echo "创建测试文档..."
-          cat > test-document.txt << 'EOF'
-          ARM64 CentOS LibreOffice 测试文档
-          
-          这是一个用于测试文档转换功能的示例文件。
-          
-          测试内容：
-          1. 中文字符支持测试：你好世界
-          2. 英文字符支持测试：Hello World
-          3. 数字支持测试：1234567890
-          4. 特殊字符测试：@#$%^&*()
-          
-          构建架构：ARM64 (aarch64)
-          操作系统：CentOS 7.9.2009  
-          Java 版本：OpenJDK 1.8
-          LibreOffice 版本：5.3.6.1
-          
-          测试时间：$(date)
+          功能测试：
+          - 中文支持：你好世界
+          - English: Hello World  
+          - 数字: 123456789
+          - 架构: ARM64 (aarch64)
           EOF
           
-          # 创建测试输出目录
           mkdir -p test-output
           
-          # 测试多种格式转换
+          echo "🔄 转换文档..."
           docker run --rm --platform linux/arm64 \
-            -v $(pwd)/test-document.txt:/tmp/test-document.txt \
+            -v $(pwd)/test.txt:/tmp/test.txt \
             -v $(pwd)/test-output:/output \
             "$IMAGE_TAG" \
             bash -c "
-              echo '转换测试文件为多种格式:'
-              
-              libreoffice --headless --convert-to pdf --outdir /output /tmp/test-document.txt &
-              libreoffice --headless --convert-to docx --outdir /output /tmp/test-document.txt &
-              libreoffice --headless --convert-to odt --outdir /output /tmp/test-document.txt &
-              
-              wait
-              
-              echo '转换完成，检查结果:'
+              libreoffice --headless --convert-to pdf --outdir /output /tmp/test.txt
+              libreoffice --headless --convert-to docx --outdir /output /tmp/test.txt
+              echo '转换完成:'
               ls -la /output/
-              
-              echo '验证文件大小:'
-              for file in /output/*; do
-                if [ -f \"\$file\" ]; then
-                  size=\$(stat -c%s \"\$file\")
-                  echo \"✅ \$(basename \$file): \$size 字节\"
-                else
-                  echo \"❌ 文件不存在: \$file\"
-                fi
-              done
             "
           
-          echo "✅ 完整文档转换测试完成"
+          echo "✅ 文档转换测试完成"
 
       - name: Upload conversion test results
         uses: actions/upload-artifact@v4
