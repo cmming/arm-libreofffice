@@ -86,21 +86,21 @@ COPY pom.xml .
 
 # 创建Maven配置，使用国内镜像加速依赖下载
 RUN mkdir -p ~/.m2 && \
-    cat > ~/.m2/settings.xml << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
-          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 
-          http://maven.apache.org/xsd/settings-1.0.0.xsd">
-  <mirrors>
-    <mirror>
-      <id>aliyun</id>
-      <name>Aliyun Central</name>
-      <url>https://maven.aliyun.com/repository/public</url>
-      <mirrorOf>central</mirrorOf>
-    </mirror>
-  </mirrors>
-</settings>
+    cat > ~/.m2/settings.xml << 'EOF' && \
+<?xml version="1.0" encoding="UTF-8"?> \
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0" \
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" \
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0  \
+          http://maven.apache.org/xsd/settings-1.0.0.xsd"> \
+  <mirrors> \
+    <mirror> \
+      <id>aliyun</id> \
+      <name>Aliyun Central</name> \
+      <url>https://maven.aliyun.com/repository/public</url> \
+      <mirrorOf>central</mirrorOf> \
+    </mirror> \
+  </mirrors> \
+</settings> \
 EOF
 
 # 预下载Maven依赖（重要的缓存层）
