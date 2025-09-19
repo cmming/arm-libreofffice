@@ -1,7 +1,15 @@
-FROM arm64v8/centos:7.9.2009
+# 支持多架构构建的基础镜像
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+# Docker Buildx会自动根据--platform参数选择正确的基础镜像
+FROM centos:7.9.2009
 
 # 设置构建时优化环境变量
 ENV BUILDKIT_INLINE_CACHE=1
+
+# 显示构建信息
+RUN echo "Building on: $BUILDPLATFORM, target: $TARGETPLATFORM, architecture: $(uname -m)"
 
 # 修复 CentOS 7 yum 仓库配置（使用归档仓库）并优化 yum 性能
 RUN set -ex && \
@@ -56,7 +64,7 @@ RUN set -ex && \
     # 构建时验证（减少日志输出）
     java -version >/dev/null 2>&1 && \
     libreoffice --version >/dev/null 2>&1 && \
-    echo "✅ ARM64 构建完成: $(uname -m)" && \
+    echo "✅ 多架构构建完成: $(uname -m) (Platform: $TARGETPLATFORM)" && \
     echo "✅ 语言环境: $LANG" && \
     rm -rf /tmp/* /var/tmp/*
 

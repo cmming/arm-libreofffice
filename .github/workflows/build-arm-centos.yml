@@ -1,8 +1,8 @@
-name: Build ARM CentOS 7.9 with Java8 and LibreOffice
+name: Build Multi-Platform CentOS 7.9 with Java8 and LibreOffice
 
 env:
   IMAGE_VERSION: "v1.0.0"
-  IMAGE_NAME: "arm-centos79-java8-libreoffice"
+  IMAGE_NAME: "centos79-java8-libreoffice"
 
 on:
   workflow_dispatch:
@@ -29,30 +29,32 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm64
+          platforms: arm64,amd64
 
-      # 缓存 QEMU 二进制文件
+      # 缓存 QEMU 二进制文件（多平台）
       - name: Cache QEMU binaries
         uses: actions/cache@v4
         with:
           path: /usr/bin/qemu-*
-          key: qemu-${{ runner.os }}-${{ runner.arch }}
+          key: qemu-${{ runner.os }}-${{ runner.arch }}-multiplatform
           restore-keys: |
             qemu-${{ runner.os }}-
 
-      - name: Setup ARM64 emulation with binfmt
+      - name: Setup multi-platform emulation with binfmt
         run: |
-          # 使用 tonistiigi/binfmt 设置更好的 ARM64 模拟
-          docker run --rm --privileged tonistiigi/binfmt --install arm64
-          echo "✅ ARM64 binfmt emulation enabled"
+          # 使用 tonistiigi/binfmt 设置多平台模拟
+          docker run --rm --privileged tonistiigi/binfmt --install arm64,amd64
+          echo "✅ Multi-platform binfmt emulation enabled"
 
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v3
         with:
-          # 启用实验性特性以提升 ARM64 构建性能
+          platforms: linux/amd64,linux/arm64
+          # 启用实验性特性以提升多平台构建性能
           driver-opts: |
             network=host
+            image=moby/buildkit:v0.12.0
             env.BUILDKIT_STEP_LOG_MAX_SIZE=50000000
             env.BUILDKIT_STEP_LOG_MAX_SPEED=100000000
           # 使用本地构建器提升性能
@@ -78,30 +80,29 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push ARM64 CentOS 7.9 image
-        id: build
+      - name: Build and push multi-platform image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/arm64
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
           labels: |
-            org.opencontainers.image.title=ARM CentOS 7.9 with Java 8 and LibreOffice
-            org.opencontainers.image.description=ARM64 CentOS 7.9 Docker image with Java 8 and LibreOffice for document processing
+            org.opencontainers.image.title=Multi-Platform CentOS 7.9 with Java 8 and LibreOffice
+            org.opencontainers.image.description=Multi-architecture (AMD64/ARM64) CentOS 7.9 Docker image with Java 8 and LibreOffice for document processing
             org.opencontainers.image.vendor=cmming
           # 优化缓存策略 - 多级缓存
           cache-from: |
             type=gha,scope=build-${{ github.ref_name }}
             type=gha,scope=build-main
-            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:buildcache-${{ github.ref_name }}
-            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:buildcache-main
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache-${{ github.ref_name }}
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache-main
           cache-to: |
             type=gha,mode=max,scope=build-${{ github.ref_name }}
-            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:buildcache-${{ github.ref_name }},mode=max
-          # ARM64 构建优化参数
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache-${{ github.ref_name }},mode=max
+          # 多平台构建优化参数
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             BUILDKIT_MULTI_PLATFORM=1
