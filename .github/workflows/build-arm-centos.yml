@@ -19,6 +19,7 @@ jobs:
     outputs:
       image-tags: ${{ steps.meta.outputs.tags }}
       image-digest: ${{ steps.build.outputs.digest }}
+      image-pushed: ${{ github.event_name != 'pull_request' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -81,11 +82,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=stable
+            type=raw,value=latest
           labels: |
             org.opencontainers.image.title=ARM CentOS 7.9 with Java 8 and LibreOffice
             org.opencontainers.image.description=ARM64 CentOS 7.9 Docker image with Java 8 and LibreOffice for document processing
@@ -120,7 +117,7 @@ jobs:
   quick-test:
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name != 'pull_request'
+    if: needs.build.outputs.image-pushed == 'true'
     steps:
       - name: Checkout repository  
         uses: actions/checkout@v4
@@ -144,14 +141,14 @@ jobs:
         run: |
           echo "=== 快速功能验证 ==="
           
-          # 获取第一个推送的镜像标签
-          IMAGE_TAG=$(echo '${{ needs.build.outputs.image-tags }}' | head -n1)
+          # 获取镜像标签（现在只有latest标签）
+          IMAGE_TAG="${{ needs.build.outputs.image-tags }}"
           echo "测试镜像: $IMAGE_TAG"
           
           # 检查镜像标签是否为空
           if [ -z "$IMAGE_TAG" ]; then
             echo "❌ 错误: 镜像标签为空，无法进行测试"
-            echo "可用的镜像标签: ${{ needs.build.outputs.image-tags }}"
+            echo "构建输出状态: image-pushed=${{ needs.build.outputs.image-pushed }}"
             exit 1
           fi
           
@@ -181,7 +178,7 @@ jobs:
   full-test:
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.full_test
+    if: github.event_name == 'workflow_dispatch' && inputs.full_test && needs.build.outputs.image-pushed == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -192,7 +189,7 @@ jobs:
 
       - name: Document conversion test (complete)
         run: |
-          IMAGE_TAG=$(echo '${{ needs.build.outputs.image-tags }}' | head -n1)
+          IMAGE_TAG="${{ needs.build.outputs.image-tags }}"
           
           echo "=== 文档转换功能测试（完整版）==="
           echo "使用镜像: $IMAGE_TAG"
@@ -200,7 +197,7 @@ jobs:
           # 检查镜像标签是否为空
           if [ -z "$IMAGE_TAG" ]; then
             echo "❌ 错误: 镜像标签为空，无法进行测试"
-            echo "可用的镜像标签: ${{ needs.build.outputs.image-tags }}"
+            echo "构建输出状态: image-pushed=${{ needs.build.outputs.image-pushed }}"
             exit 1
           fi
           
