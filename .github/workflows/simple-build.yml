@@ -1,0 +1,106 @@
+name: Simple Multi-Platform CentOS 7.9 Build
+
+env:
+  IMAGE_VERSION: "v1.0.0"
+  IMAGE_NAME: "centos79-java8-libreoffice"
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Target platforms'
+        type: choice
+        default: 'linux/amd64,linux/arm64'
+        options:
+          - 'linux/amd64,linux/arm64'
+          - 'linux/arm64'
+          - 'linux/amd64'
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 第一次尝试：标准构建
+      - name: Build and push Docker image
+        id: build_push
+        continue-on-error: true
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.optimized
+          platforms: ${{ inputs.platforms || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 第二次尝试：如果第一次失败
+      - name: Retry build on failure
+        if: steps.build_push.outcome == 'failure' && github.event_name != 'pull_request'
+        run: |
+          echo "🔄 First build failed, waiting 60 seconds and retrying..."
+          sleep 60
+          
+          # 重新登录
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          
+          # 清理可能的构建缓存问题
+          docker system prune -f || true
+          
+          # 使用更简单的方式重试
+          docker buildx build \
+            --platform "${{ inputs.platforms || 'linux/amd64,linux/arm64' }}" \
+            --file ./Dockerfile.optimized \
+            --tag "${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest" \
+            --tag "${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}" \
+            --push \
+            . || {
+              echo "❌ Second attempt also failed."
+              echo "🔗 This might be a Docker Hub service issue."
+              echo "🔗 Check status at: https://www.dockerstatus.com/"
+              exit 1
+            }
+          
+          echo "✅ Retry successful!"
+
+  # 简单测试
+  test:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: needs.build-and-push.result == 'success'
+    
+    steps:
+      - name: Test built image
+        run: |
+          # 测试AMD64镜像
+          docker run --rm --platform linux/amd64 \
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest \
+            bash -c "java -version && libreoffice --version"
+          
+          echo "✅ Image test completed successfully"
