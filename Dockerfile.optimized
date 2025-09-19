@@ -1,0 +1,119 @@
+# 优化的多架构Dockerfile
+# 支持更快的ARM64构建
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+FROM centos:7.9.2009
+
+# 构建时环境变量
+ENV BUILDKIT_INLINE_CACHE=1 \
+    BUILDKIT_MULTI_PLATFORM=1
+
+# 显示构建信息
+RUN echo "Building on: $BUILDPLATFORM, target: $TARGETPLATFORM, architecture: $(uname -m)"
+
+# === 关键优化：单个RUN层安装所有依赖 ===
+RUN set -ex && \
+    # 1. 修复CentOS 7仓库配置并优化yum性能
+    sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*.repo && \
+    sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo && \
+    # yum性能优化配置（减少网络I/O）
+    echo -e "fastestmirror=1\ndeltarpm=0\nkeepcache=0\nmax_parallel_downloads=10\ntimeout=60\nretries=5" >> /etc/yum.conf && \
+    yum clean all && \
+    # 2. 一次性安装所有必需软件包（关键优化点）
+    yum update -y && \
+    yum install -y epel-release && \
+    yum install -y \
+        # 基础工具
+        glibc-common wget curl tar \
+        # Java环境
+        java-1.8.0-openjdk java-1.8.0-openjdk-devel \
+        # LibreOffice
+        libreoffice \
+        # 字体支持（减少失败重试）
+        dejavu-fonts-common dejavu-sans-fonts dejavu-serif-fonts dejavu-sans-mono-fonts \
+        wqy-microhei-fonts wqy-zenhei-fonts \
+        && \
+    # 3. 设置语言环境（避免重复安装）
+    yum reinstall -y glibc-common && \
+    localedef -c -f UTF-8 -i zh_CN zh_CN.UTF-8 && \
+    localedef -c -f UTF-8 -i en_US en_US.UTF-8 && \
+    # 4. 尝试安装额外字体（失败不阻塞构建）
+    (yum groupinstall -y "Fonts" 2>/dev/null || true) && \
+    (yum install -y google-noto-sans-cjk-ttc-fonts google-noto-serif-cjk-ttc-fonts cjkuni-uming-fonts cjkuni-ukai-fonts 2>/dev/null || true) && \
+    # 5. 更新字体缓存并验证安装
+    fc-cache -fv && \
+    java -version && \
+    libreoffice --version && \
+    # 6. 彻底清理缓存（减少镜像大小）
+    yum clean all && \
+    rm -rf /var/cache/yum /tmp/* /var/tmp/* /var/log/yum.log
+
+# === 环境变量设置 ===
+ENV LANG=zh_CN.UTF-8 \
+    LC_ALL=zh_CN.UTF-8 \
+    LANGUAGE=zh_CN:zh \
+    LC_CTYPE=zh_CN.UTF-8 \
+    JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
+
+ENV PATH=$JAVA_HOME/bin:$PATH
+
+# === Maven安装和配置优化 ===
+RUN set -ex && \
+    MAVEN_VERSION=3.9.6 && \
+    # 使用更快的镜像源下载Maven
+    MAVEN_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/apache/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" && \
+    MAVEN_BACKUP="https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" && \
+    # 尝试从快速镜像下载，失败则使用备用源
+    (wget --timeout=30 -q "$MAVEN_MIRROR" || wget --timeout=60 -q "$MAVEN_BACKUP") && \
+    tar -xzf apache-maven-${MAVEN_VERSION}-bin.tar.gz -C /opt && \
+    ln -s /opt/apache-maven-${MAVEN_VERSION} /opt/maven && \
+    rm -f apache-maven-${MAVEN_VERSION}-bin.tar.gz && \
+    # 验证Maven安装
+    /opt/maven/bin/mvn -version
+
+# 更新环境变量
+ENV MAVEN_HOME=/opt/maven
+ENV PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH
+
+# 设置工作目录
+WORKDIR /app
+
+# === Maven依赖缓存优化 ===
+# 先复制POM文件，利用Docker缓存层
+COPY pom.xml .
+
+# 创建Maven配置，使用国内镜像加速依赖下载
+RUN mkdir -p ~/.m2 && \
+    cat > ~/.m2/settings.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 
+          http://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <mirrors>
+    <mirror>
+      <id>aliyun</id>
+      <name>Aliyun Central</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+      <mirrorOf>central</mirrorOf>
+    </mirror>
+  </mirrors>
+</settings>
+EOF
+
+# 预下载Maven依赖（重要的缓存层）
+RUN mvn dependency:go-offline -B -q
+
+# 复制源代码（最后复制，避免代码更改影响缓存）
+COPY src/ src/
+
+# 构建应用
+RUN mvn clean package -DskipTests -B -q
+
+# 暴露端口
+EXPOSE 8080
+
+# 启动应用
+CMD ["java", "-jar", "target/libreoffice-spring-boot-1.0.0.jar"]
