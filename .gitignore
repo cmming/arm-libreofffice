@@ -1,0 +1,26 @@
+# 日志文件
+logs/
+*.log
+
+# 临时文件
+temp/
+tmp/
+
+# Java 编译文件
+*.class
+
+# IDE 文件
+.vscode/
+.idea/
+*.iml
+
+# Docker 相关
+.dockerignore
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 应用运行时文件
+*.pid
+*.sock

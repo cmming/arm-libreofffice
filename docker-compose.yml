@@ -36,12 +36,6 @@ services:
       # 可选：挂载文档转换临时目录
       - ./temp:/tmp/converts
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
     depends_on:
       - base-image
     profiles:

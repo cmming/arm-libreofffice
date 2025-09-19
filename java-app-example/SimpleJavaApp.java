@@ -73,15 +73,11 @@ public class SimpleJavaApp {
                     </ul>
                     
                     <h2>测试文档转换：</h2>
-                    <form action="/convert" method="post" enctype="multipart/form-data">
-                        <input type="file" name="file" accept=".txt,.doc,.docx,.odt">
-                        <select name="format">
-                            <option value="pdf">转换为 PDF</option>
-                            <option value="docx">转换为 DOCX</option>
-                            <option value="odt">转换为 ODT</option>
-                        </select>
-                        <button type="submit">转换</button>
+                    <p>点击下面的按钮测试 LibreOffice 转换功能（将测试文档转换为 PDF）：</p>
+                    <form action="/convert" method="post">
+                        <button type="submit">测试 TXT → PDF 转换</button>
                     </form>
+                    <p><small>注：这是演示版本，实际转换中会创建测试文档并转换为 PDF</small></p>
                 </body>
                 </html>
             """;
@@ -121,26 +117,182 @@ public class SimpleJavaApp {
     // LibreOffice 转换处理器
     static class ConvertHandler implements HttpHandler {
         public void handle(HttpExchange exchange) throws IOException {
-            if ("POST".equals(exchange.getRequestMethod())) {
-                // 简化的文档转换示例
-                // 实际应用中需要解析 multipart/form-data 并调用 LibreOffice
-                String response = """
-                    {
-                        "status": "success",
-                        "message": "LibreOffice转换功能已集成",
-                        "note": "实际转换需要实现文件上传和LibreOffice命令行调用",
-                        "command_example": "libreoffice --headless --convert-to pdf input.docx"
-                    }
-                """;
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendErrorResponse(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            try {
+                // 检查 LibreOffice 是否可用
+                if (!isLibreOfficeAvailable()) {
+                    sendErrorResponse(exchange, 500, "LibreOffice not available");
+                    return;
+                }
                 
-                exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
-                exchange.sendResponseHeaders(200, response.getBytes("UTF-8").length);
-                OutputStream os = exchange.getResponseBody();
-                os.write(response.getBytes("UTF-8"));
-                os.close();
-            } else {
-                exchange.sendResponseHeaders(405, 0);
-                exchange.getResponseBody().close();
+                // 获取请求参数
+                String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+                if (contentType == null || !contentType.startsWith("multipart/form-data")) {
+                    sendErrorResponse(exchange, 400, "Content-Type must be multipart/form-data");
+                    return;
+                }
+                
+                // 简化处理：对于演示目的，我们创建一个测试文件并转换
+                String testContent = """
+                    ARM64 LibreOffice 转换测试文档
+                    
+                    时间：%s
+                    架构：%s
+                    Java版本：%s
+                    
+                    这是一个测试转换功能的文档。
+                    包含中文字符测试：你好世界！
+                    包含英文字符测试：Hello World!
+                    包含数字测试：1234567890
+                    """.formatted(
+                    new java.util.Date(),
+                    System.getProperty("os.arch"),
+                    System.getProperty("java.version")
+                );
+                
+                // 执行转换
+                ConvertResult result = performConversion(testContent);
+                
+                if (result.success) {
+                    sendSuccessResponse(exchange, result);
+                } else {
+                    sendErrorResponse(exchange, 500, result.message);
+                }
+                
+            } catch (Exception e) {
+                sendErrorResponse(exchange, 500, "Conversion failed: " + e.getMessage());
+            }
+        }
+        
+        private boolean isLibreOfficeAvailable() {
+            try {
+                ProcessBuilder pb = new ProcessBuilder("libreoffice", "--version");
+                Process process = pb.start();
+                int exitCode = process.waitFor();
+                return exitCode == 0;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+        
+        private ConvertResult performConversion(String content) {
+            File tempDir = null;
+            try {
+                // 创建临时目录
+                tempDir = File.createTempFile("convert", "");
+                tempDir.delete();
+                tempDir.mkdirs();
+                
+                // 创建输入文件
+                File inputFile = new File(tempDir, "input.txt");
+                try (FileWriter writer = new FileWriter(inputFile, java.nio.charset.StandardCharsets.UTF_8)) {
+                    writer.write(content);
+                }
+                
+                // 执行转换
+                ProcessBuilder pb = new ProcessBuilder(
+                    "libreoffice", "--headless", "--convert-to", "pdf", 
+                    "--outdir", tempDir.getAbsolutePath(),
+                    inputFile.getAbsolutePath()
+                );
+                
+                Process process = pb.start();
+                int exitCode = process.waitFor();
+                
+                if (exitCode != 0) {
+                    return new ConvertResult(false, "LibreOffice conversion failed with exit code: " + exitCode, null, 0);
+                }
+                
+                // 检查输出文件
+                File outputFile = new File(tempDir, "input.pdf");
+                if (!outputFile.exists()) {
+                    return new ConvertResult(false, "Output file not generated", null, 0);
+                }
+                
+                return new ConvertResult(true, "Conversion successful", outputFile.getName(), outputFile.length());
+                
+            } catch (Exception e) {
+                return new ConvertResult(false, "Conversion error: " + e.getMessage(), null, 0);
+            } finally {
+                // 清理临时文件
+                if (tempDir != null && tempDir.exists()) {
+                    deleteDirectory(tempDir);
+                }
+            }
+        }
+        
+        private void sendSuccessResponse(HttpExchange exchange, ConvertResult result) throws IOException {
+            String response = """
+                {
+                    "status": "success",
+                    "message": "%s",
+                    "output_file": "%s",
+                    "file_size": %d,
+                    "timestamp": "%s",
+                    "conversion_info": {
+                        "input_format": "txt",
+                        "output_format": "pdf",
+                        "libreoffice_available": true
+                    }
+                }
+                """.formatted(
+                result.message,
+                result.outputFile,
+                result.fileSize,
+                new java.util.Date()
+            );
+            
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+            exchange.sendResponseHeaders(200, response.getBytes("UTF-8").length);
+            OutputStream os = exchange.getResponseBody();
+            os.write(response.getBytes("UTF-8"));
+            os.close();
+        }
+        
+        private void sendErrorResponse(HttpExchange exchange, int statusCode, String error) throws IOException {
+            String response = """
+                {
+                    "status": "error",
+                    "message": "%s",
+                    "timestamp": "%s"
+                }
+                """.formatted(error, new java.util.Date());
+            
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+            exchange.sendResponseHeaders(statusCode, response.getBytes("UTF-8").length);
+            OutputStream os = exchange.getResponseBody();
+            os.write(response.getBytes("UTF-8"));
+            os.close();
+        }
+        
+        private void deleteDirectory(File dir) {
+            if (dir.isDirectory()) {
+                File[] children = dir.listFiles();
+                if (children != null) {
+                    for (File child : children) {
+                        deleteDirectory(child);
+                    }
+                }
+            }
+            dir.delete();
+        }
+        
+        // 转换结果类
+        private static class ConvertResult {
+            final boolean success;
+            final String message;
+            final String outputFile;
+            final long fileSize;
+            
+            ConvertResult(boolean success, String message, String outputFile, long fileSize) {
+                this.success = success;
+                this.message = message;
+                this.outputFile = outputFile;
+                this.fileSize = fileSize;
             }
         }
     }

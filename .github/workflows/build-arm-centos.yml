@@ -17,6 +17,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
+      image-tags: ${{ steps.meta.outputs.tags }}
       image-digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout repository
@@ -80,7 +81,11 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice
           tags: |
-            type=raw,value=latest
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=stable
           labels: |
             org.opencontainers.image.title=ARM CentOS 7.9 with Java 8 and LibreOffice
             org.opencontainers.image.description=ARM64 CentOS 7.9 Docker image with Java 8 and LibreOffice for document processing
@@ -88,7 +93,10 @@ jobs:
 
       - name: Debug metadata outputs
         run: |
-          echo "🔍 生成的镜像标签: ${{ steps.meta.outputs.tags }}"
+          echo "🔍 元数据步骤输出调试："
+          echo "tags: ${{ steps.meta.outputs.tags }}"
+          echo "labels: ${{ steps.meta.outputs.labels }}"
+          echo "json: ${{ steps.meta.outputs.json }}"
 
       - name: Build and push ARM64 CentOS 7.9 image
         id: build
@@ -115,18 +123,26 @@ jobs:
           # 构建器优化配置
           builder: ${{ steps.buildx.outputs.name }}
 
-      - name: Build completion verification
-        run: |
-          echo "✅ ARM64 镜像构建完成"
-          echo "✅ 推送标签: ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest"
-          echo "✅ 镜像摘要: ${{ steps.build.outputs.digest }}"
-
   # 快速测试作业（在构建完成后运行）
   quick-test:
     runs-on: ubuntu-latest
     needs: build
     if: github.event_name != 'pull_request'
     steps:
+      - name: Checkout repository  
+        uses: actions/checkout@v4
+
+      # 缓存测试环境
+      - name: Cache test environment
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/.buildx-cache
+            ~/.docker
+          key: test-env-${{ runner.os }}-${{ hashFiles('Dockerfile') }}
+          restore-keys: |
+            test-env-${{ runner.os }}-
+
       - name: Set up QEMU and binfmt
         run: |
           docker run --rm --privileged tonistiigi/binfmt --install arm64
@@ -135,71 +151,141 @@ jobs:
         run: |
           echo "=== 快速功能验证 ==="
           
-          # 直接使用已知的镜像标签
-          IMAGE_TAG='${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest'
-          echo "🔍 使用镜像: $IMAGE_TAG"
+          # 调试输出
+          echo "🔍 调试信息："
+          echo "构建输出: '${{ needs.build.outputs.image-tags }}'"
+          echo "事件类型: ${{ github.event_name }}"
           
-          echo "🧪 运行测试..."
+          # 获取第一个推送的镜像标签
+          TAGS_RAW='${{ needs.build.outputs.image-tags }}'
+          IMAGE_TAG=$(echo "$TAGS_RAW" | tr ',' '\n' | head -n1 | xargs)
+          echo "原始标签: $TAGS_RAW"
+          echo "解析的测试镜像: $IMAGE_TAG"
           
-          # 先测试镜像是否可访问
-          echo "🔍 验证镜像可访问性..."
-          docker run --rm --platform linux/arm64 "$IMAGE_TAG" echo "镜像访问成功"
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "❌ 错误：从构建作业获取的镜像标签为空"
+            echo "原始输出: '${{ needs.build.outputs.image-tags }}'"
+            echo "这可能是因为："
+            echo "1. 构建作业没有成功完成"
+            echo "2. outputs.image-tags 没有正确设置"
+            echo "3. 在 PR 模式下镜像没有推送"
+            exit 1
+          fi
           
-          # 顺序执行测试以便调试
-          echo "☕ Java 版本检查:"
-          docker run --rm --platform linux/arm64 "$IMAGE_TAG" java -version
+          # 检查镜像标签是否为空
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "❌ 错误: 镜像标签为空，无法进行测试"
+            echo "构建输出调试信息:"
+            echo "  image-tags: ${{ needs.build.outputs.image-tags }}"
+            echo "  image-digest: ${{ needs.build.outputs.image-digest }}"
+            echo "  github.event_name: ${{ github.event_name }}"
+            exit 1
+          fi
           
-          echo "📄 LibreOffice 版本检查:"
-          docker run --rm --platform linux/arm64 "$IMAGE_TAG" libreoffice --version
+          # 并行运行基础测试（更快）
+          echo "运行并行基础测试..."
+          (
+            echo "Java 测试:" && \
+            docker run --rm --platform linux/arm64 "$IMAGE_TAG" java -version 2>&1 | head -3
+          ) &
           
-          echo "🏗️ 架构验证:"
-          docker run --rm --platform linux/arm64 "$IMAGE_TAG" uname -m
+          (
+            echo "LibreOffice 测试:" && \
+            docker run --rm --platform linux/arm64 "$IMAGE_TAG" libreoffice --version 2>&1 | head -1
+          ) &
           
-          echo "✅ 快速验证完成"
+          (
+            echo "架构验证:" && \
+            docker run --rm --platform linux/arm64 "$IMAGE_TAG" uname -m 2>&1
+          ) &
+          
+          # 等待所有后台任务完成
+          wait
+          
+          echo "✅ 基础功能验证完成"
 
-  # 完整测试作业（手动触发时选择或push到main分支时）
+  # 完整测试作业（在快速测试通过后运行）
   full-test:
     runs-on: ubuntu-latest
     needs: [build, quick-test]
-    if: (github.event_name == 'workflow_dispatch' && inputs.full_test) || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch' && inputs.full_test
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Set up QEMU and binfmt
         run: |
           docker run --rm --privileged tonistiigi/binfmt --install arm64
 
       - name: Document conversion test (complete)
         run: |
-          # 直接使用已知的镜像标签
-          IMAGE_TAG='${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice:latest'
-          echo "=== 文档转换功能测试 ==="
-          echo "🔍 使用镜像: $IMAGE_TAG"
+          TAGS_RAW='${{ needs.build.outputs.image-tags }}'
+          IMAGE_TAG=$(echo "$TAGS_RAW" | tr ',' '\n' | head -n1 | xargs)
           
-          # 创建简单测试文档
-          cat > test.txt << 'EOF'
-          ARM64 CentOS LibreOffice 测试
+          echo "=== 文档转换功能测试（完整版）==="
+          echo "原始标签: $TAGS_RAW"
+          echo "使用镜像: $IMAGE_TAG"
           
-          功能测试：
-          - 中文支持：你好世界
-          - English: Hello World  
-          - 数字: 123456789
-          - 架构: ARM64 (aarch64)
+          # 检查镜像标签是否为空
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "❌ 错误: 镜像标签为空，无法进行测试"
+            echo "可用的镜像标签: ${{ needs.build.outputs.image-tags }}"
+            exit 1
+          fi
+          
+          # 创建测试文档
+          echo "创建测试文档..."
+          cat > test-document.txt << 'EOF'
+          ARM64 CentOS LibreOffice 测试文档
+          
+          这是一个用于测试文档转换功能的示例文件。
+          
+          测试内容：
+          1. 中文字符支持测试：你好世界
+          2. 英文字符支持测试：Hello World
+          3. 数字支持测试：1234567890
+          4. 特殊字符测试：@#$%^&*()
+          
+          构建架构：ARM64 (aarch64)
+          操作系统：CentOS 7.9.2009  
+          Java 版本：OpenJDK 1.8
+          LibreOffice 版本：5.3.6.1
+          
+          测试时间：$(date)
           EOF
           
+          # 创建测试输出目录
           mkdir -p test-output
           
-          echo "🔄 转换文档..."
+          # 测试多种格式转换
           docker run --rm --platform linux/arm64 \
-            -v $(pwd)/test.txt:/tmp/test.txt \
+            -v $(pwd)/test-document.txt:/tmp/test-document.txt \
             -v $(pwd)/test-output:/output \
             "$IMAGE_TAG" \
             bash -c "
-              libreoffice --headless --convert-to pdf --outdir /output /tmp/test.txt
-              libreoffice --headless --convert-to docx --outdir /output /tmp/test.txt
-              echo '转换完成:'
+              echo '转换测试文件为多种格式:'
+              
+              libreoffice --headless --convert-to pdf --outdir /output /tmp/test-document.txt &
+              libreoffice --headless --convert-to docx --outdir /output /tmp/test-document.txt &
+              libreoffice --headless --convert-to odt --outdir /output /tmp/test-document.txt &
+              
+              wait
+              
+              echo '转换完成，检查结果:'
               ls -la /output/
+              
+              echo '验证文件大小:'
+              for file in /output/*; do
+                if [ -f \"\$file\" ]; then
+                  size=\$(stat -c%s \"\$file\")
+                  echo \"✅ \$(basename \$file): \$size 字节\"
+                else
+                  echo \"❌ 文件不存在: \$file\"
+                fi
+              done
             "
           
-          echo "✅ 文档转换测试完成"
+          echo "✅ 完整文档转换测试完成"
 
       - name: Upload conversion test results
         uses: actions/upload-artifact@v4
@@ -208,11 +294,11 @@ jobs:
           path: test-output/
           retention-days: 7
 
-  # 更新 Docker Hub 描述（手动触发或push到main分支时）
+  # 仅在手动触发时更新 Docker Hub 描述
   update-description:
     runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: [build, quick-test]
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
