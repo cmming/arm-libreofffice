@@ -72,11 +72,12 @@ RUN set -ex && \
     rm -rf /tmp/* /var/tmp/*
 
 # 更新环境变量，添加 Maven
-ENV MAVEN_HOME=/opt/maven \
-    PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH
+ENV MAVEN_HOME=/opt/maven
+ENV PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH
 
 # 验证 Maven 和 Java 安装
 RUN set -ex && \
+    export PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH && \
     java -version && \
     mvn -version && \
     echo "✅ Maven 安装完成: $(mvn -version | head -n 1)"
