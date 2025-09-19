@@ -1,5 +1,9 @@
 name: Build ARM CentOS 7.9 with Java8 and LibreOffice
 
+env:
+  IMAGE_VERSION: "v1.0.0"
+  IMAGE_NAME: "arm-centos79-java8-libreoffice"
+
 on:
   workflow_dispatch:
     inputs:
@@ -17,8 +21,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      image-tags: ${{ steps.meta.outputs.tags }}
-      image-digest: ${{ steps.build.outputs.digest }}
       image-pushed: ${{ github.event_name != 'pull_request' }}
     steps:
       - name: Checkout repository
@@ -76,18 +78,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice
-          tags: |
-            type=raw,value=latest
-          labels: |
-            org.opencontainers.image.title=ARM CentOS 7.9 with Java 8 and LibreOffice
-            org.opencontainers.image.description=ARM64 CentOS 7.9 Docker image with Java 8 and LibreOffice for document processing
-            org.opencontainers.image.vendor=cmming
-
       - name: Build and push ARM64 CentOS 7.9 image
         id: build
         uses: docker/build-push-action@v5
@@ -95,8 +85,13 @@ jobs:
           context: .
           platforms: linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+          labels: |
+            org.opencontainers.image.title=ARM CentOS 7.9 with Java 8 and LibreOffice
+            org.opencontainers.image.description=ARM64 CentOS 7.9 Docker image with Java 8 and LibreOffice for document processing
+            org.opencontainers.image.vendor=cmming
           # 优化缓存策略 - 多级缓存
           cache-from: |
             type=gha,scope=build-${{ github.ref_name }}
@@ -141,16 +136,9 @@ jobs:
         run: |
           echo "=== 快速功能验证 ==="
           
-          # 获取镜像标签（现在只有latest标签）
-          IMAGE_TAG="${{ needs.build.outputs.image-tags }}"
+          # 使用环境变量定义的镜像标签
+          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
           echo "测试镜像: $IMAGE_TAG"
-          
-          # 检查镜像标签是否为空
-          if [ -z "$IMAGE_TAG" ]; then
-            echo "❌ 错误: 镜像标签为空，无法进行测试"
-            echo "构建输出状态: image-pushed=${{ needs.build.outputs.image-pushed }}"
-            exit 1
-          fi
           
           # 并行运行基础测试（更快）
           echo "运行并行基础测试..."
@@ -189,17 +177,10 @@ jobs:
 
       - name: Document conversion test (complete)
         run: |
-          IMAGE_TAG="${{ needs.build.outputs.image-tags }}"
+          IMAGE_TAG="${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
           
           echo "=== 文档转换功能测试（完整版）==="
           echo "使用镜像: $IMAGE_TAG"
-          
-          # 检查镜像标签是否为空
-          if [ -z "$IMAGE_TAG" ]; then
-            echo "❌ 错误: 镜像标签为空，无法进行测试"
-            echo "构建输出状态: image-pushed=${{ needs.build.outputs.image-pushed }}"
-            exit 1
-          fi
           
           # 创建测试文档
           echo "创建测试文档..."
@@ -276,6 +257,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ secrets.DOCKERHUB_USERNAME }}/arm-centos79-java8-libreoffice
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
           short-description: ARM64 CentOS 7.9 with Java 8 and LibreOffice for document processing
           readme-filepath: ./README.md
