@@ -55,7 +55,8 @@ public class LibreOfficeConversionService {
 
             // 创建输入文件
             File inputFile = new File(tempDirFile, "input.txt");
-            try (FileWriter writer = new FileWriter(inputFile, java.nio.charset.StandardCharsets.UTF_8)) {
+            try (OutputStreamWriter writer = new OutputStreamWriter(
+                    new FileOutputStream(inputFile), java.nio.charset.StandardCharsets.UTF_8)) {
                 writer.write(content);
             }
 
