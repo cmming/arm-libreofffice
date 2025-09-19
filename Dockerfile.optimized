@@ -84,33 +84,16 @@ WORKDIR /app
 # 先复制POM文件，利用Docker缓存层
 COPY pom.xml .
 
-# 创建Maven配置，使用国内镜像加速依赖下载
-RUN mkdir -p ~/.m2 && \
-    cat > ~/.m2/settings.xml << 'EOF' && \
-<?xml version="1.0" encoding="UTF-8"?> \
-<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0" \
-          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" \
-          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0  \
-          http://maven.apache.org/xsd/settings-1.0.0.xsd"> \
-  <mirrors> \
-    <mirror> \
-      <id>aliyun</id> \
-      <name>Aliyun Central</name> \
-      <url>https://maven.aliyun.com/repository/public</url> \
-      <mirrorOf>central</mirrorOf> \
-    </mirror> \
-  </mirrors> \
-</settings> \
-EOF
-
-# 预下载Maven依赖（重要的缓存层）
-RUN mvn dependency:go-offline -B -q
+# 预下载Maven依赖，使用阿里云镜像加速（重要的缓存层）
+RUN mvn dependency:go-offline -B -q \
+    -Dmaven.repo.remote=https://maven.aliyun.com/repository/public
 
 # 复制源代码（最后复制，避免代码更改影响缓存）
 COPY src/ src/
 
 # 构建应用
-RUN mvn clean package -DskipTests -B -q
+RUN mvn clean package -DskipTests -B -q \
+    -Dmaven.repo.remote=https://maven.aliyun.com/repository/public
 
 # 暴露端口
 EXPOSE 8080
