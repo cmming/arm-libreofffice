@@ -40,13 +40,15 @@ RUN set -ex && \
     yum clean all && \
     rm -rf /var/cache/yum /tmp/* /var/tmp/*
 
-# 设置环境变量
+# 设置环境变量（修复 JAVA_HOME 引用问题）
 ENV LANG=zh_CN.UTF-8 \
     LC_ALL=zh_CN.UTF-8 \
     LANGUAGE=zh_CN:zh \
     LC_CTYPE=zh_CN.UTF-8 \
-    JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk \
-    PATH=${PATH}:${JAVA_HOME}/bin
+    JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk
+
+# 更新 PATH 环境变量
+ENV PATH=$JAVA_HOME/bin:$PATH
 
 # 字体缓存更新和最终验证（快速完成的层）
 RUN set -ex && \
@@ -58,11 +60,26 @@ RUN set -ex && \
     echo "✅ 语言环境: $LANG" && \
     rm -rf /tmp/* /var/tmp/*
 
-# 安装 Maven 用于构建 Spring Boot 应用
+# 安装更新版本的 Maven（解决版本冲突）
 RUN set -ex && \
-    yum install -y maven && \
-    yum clean all && \
-    rm -rf /var/cache/yum /tmp/* /var/tmp/*
+    # 下载并安装 Maven 3.9.6
+    MAVEN_VERSION=3.9.6 && \
+    wget -q https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz && \
+    tar -xzf apache-maven-${MAVEN_VERSION}-bin.tar.gz -C /opt && \
+    ln -s /opt/apache-maven-${MAVEN_VERSION} /opt/maven && \
+    rm -f apache-maven-${MAVEN_VERSION}-bin.tar.gz && \
+    # 清理临时文件
+    rm -rf /tmp/* /var/tmp/*
+
+# 更新环境变量，添加 Maven
+ENV MAVEN_HOME=/opt/maven \
+    PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH
+
+# 验证 Maven 和 Java 安装
+RUN set -ex && \
+    java -version && \
+    mvn -version && \
+    echo "✅ Maven 安装完成: $(mvn -version | head -n 1)"
 
 # 设置工作目录
 WORKDIR /app
@@ -84,4 +101,3 @@ EXPOSE 8080
 
 # 启动应用
 CMD ["java", "-jar", "target/libreoffice-spring-boot-1.0.0.jar"]
-
