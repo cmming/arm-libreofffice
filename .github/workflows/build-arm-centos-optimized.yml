@@ -3,6 +3,9 @@ name: Optimized Multi-Platform CentOS 7.9 Build
 env:
   IMAGE_VERSION: "v1.0.0"
   IMAGE_NAME: "centos79-java8-libreoffice"
+  # 增加重试和容错配置
+  DOCKER_RETRY_COUNT: 3
+  DOCKER_RETRY_DELAY: 30
 
 on:
   workflow_dispatch:
@@ -61,14 +64,26 @@ jobs:
           buildkitd-flags: |
             --allow-insecure-entitlement=network.host
 
-      - name: Login to Docker Hub
+      - name: Login to Docker Hub with retry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+        env:
+          DOCKER_CLI_EXPERIMENTAL: enabled
+        # 增加重试逻辑
+        continue-on-error: true
+        id: docker_login
 
-      # 优化的单平台构建（并行执行）
+      - name: Retry Docker Hub login if needed
+        if: github.event_name != 'pull_request' && steps.docker_login.outcome == 'failure'
+        run: |
+          echo "First login attempt failed, waiting 30 seconds before retry..."
+          sleep 30
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      # 优化的单平台构建（并行执行）- 增加重试和容错机制
       - name: Build platform-specific image
         uses: docker/build-push-action@v5
         with:
@@ -80,16 +95,19 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ matrix.cache-suffix }}-latest
           labels: |
             org.opencontainers.image.title=Optimized ${{ matrix.platform }} CentOS 7.9 with Java 8 and LibreOffice
-          # 简化的缓存策略
+          # 优化的缓存策略 - 增加容错和多源缓存
           cache-from: |
             type=gha,scope=build-${{ matrix.cache-suffix }}-${{ github.ref_name }}
             type=gha,scope=build-${{ matrix.cache-suffix }}-main
+            type=local,src=/tmp/.buildx-cache-${{ matrix.cache-suffix }}
           cache-to: |
             type=gha,mode=max,scope=build-${{ matrix.cache-suffix }}-${{ github.ref_name }}
-          # 构建优化参数
+            type=local,dest=/tmp/.buildx-cache-${{ matrix.cache-suffix }}
+          # 构建优化参数 - 移除可能导致问题的参数
           build-args: |
             BUILDKIT_INLINE_CACHE=1
-            BUILDKIT_MULTI_PLATFORM=1
+          # 增加网络容错配置
+          network: host
 
   # 合并和推送多平台镜像
   push-multiplatform:
@@ -103,13 +121,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to Docker Hub with retry
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+        continue-on-error: true
+        id: docker_login_push
 
-      # 最终多平台镜像构建和推送
+      - name: Retry Docker Hub login if needed
+        if: steps.docker_login_push.outcome == 'failure'
+        run: |
+          echo "First login attempt failed, waiting 30 seconds before retry..."
+          sleep 30
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      # 最终多平台镜像构建和推送 - 增加重试和容错机制
       - name: Build and push multi-platform manifest
         uses: docker/build-push-action@v5
         with:
@@ -120,10 +147,32 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-          # 利用之前构建的缓存
+          # 利用之前构建的缓存 - 增加本地缓存备份
           cache-from: |
             type=gha,scope=build-amd64-${{ github.ref_name }}
             type=gha,scope=build-arm64-${{ github.ref_name }}
+            type=local,src=/tmp/.buildx-cache-amd64
+            type=local,src=/tmp/.buildx-cache-arm64
+          # 增加网络和推送优化
+          network: host
+          # 分批推送以减少单次请求压力
+          outputs: |
+            type=image,push=true,push-by-digest=false
+        continue-on-error: true
+        id: build_push
+
+      - name: Retry push if Docker Hub was temporarily unavailable
+        if: steps.build_push.outcome == 'failure'
+        run: |
+          echo "Build/push failed, using enhanced retry script..."
+          chmod +x ./scripts/docker-hub-retry.sh
+          ./scripts/docker-hub-retry.sh \
+            "${{ secrets.DOCKERHUB_USERNAME }}" \
+            "${{ secrets.DOCKERHUB_TOKEN }}" \
+            "./Dockerfile.optimized" \
+            "${{ inputs.platforms || 'linux/amd64,linux/arm64' }}" \
+            "${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}" \
+            "${{ env.IMAGE_VERSION }}"
 
   # 快速功能验证（并行优化）
   quick-test:
