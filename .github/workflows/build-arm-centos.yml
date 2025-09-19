@@ -31,20 +31,13 @@ jobs:
         with:
           platforms: arm64,amd64
 
-      # 缓存 QEMU 二进制文件（多平台）
-      - name: Cache QEMU binaries
-        uses: actions/cache@v4
-        with:
-          path: /usr/bin/qemu-*
-          key: qemu-${{ runner.os }}-${{ runner.arch }}-multiplatform
-          restore-keys: |
-            qemu-${{ runner.os }}-
-
-      - name: Setup multi-platform emulation with binfmt
+      # 验证多平台支持（可选，用于调试）
+      - name: Verify multi-platform support
         run: |
-          # 使用 tonistiigi/binfmt 设置多平台模拟
-          docker run --rm --privileged tonistiigi/binfmt --install arm64,amd64
-          echo "✅ Multi-platform binfmt emulation enabled"
+          echo "Available platforms:"
+          docker buildx inspect --bootstrap 2>/dev/null || true
+          echo "QEMU emulation status:"
+          cat /proc/sys/fs/binfmt_misc/qemu-aarch64 2>/dev/null && echo "✅ ARM64 emulation ready" || echo "ℹ️ ARM64 emulation will be auto-configured"
 
       - name: Set up Docker Buildx
         id: buildx
@@ -63,15 +56,6 @@ jobs:
           buildkitd-flags: |
             --allow-insecure-entitlement=network.host
             --allow-insecure-entitlement=security.insecure
-
-      # 缓存 Docker Buildx 状态
-      - name: Cache Docker Buildx state
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: buildx-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            buildx-${{ runner.os }}-
 
       - name: Login to Docker Hub
         if: github.event_name != 'pull_request'
@@ -95,19 +79,24 @@ jobs:
             org.opencontainers.image.vendor=cmming
           # 优化缓存策略 - 多级缓存
           cache-from: |
-            type=gha,scope=build-${{ github.ref_name }}
-            type=gha,scope=build-main
-            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache-${{ github.ref_name }}
-            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache-main
+            type=gha,scope=build-${{ matrix.platform || 'multi' }}-${{ github.ref_name }}
+            type=gha,scope=build-${{ matrix.platform || 'multi' }}-main
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:cache-${{ github.ref_name }}
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:cache-main
           cache-to: |
-            type=gha,mode=max,scope=build-${{ github.ref_name }}
-            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache-${{ github.ref_name }},mode=max
+            type=gha,mode=max,scope=build-${{ matrix.platform || 'multi' }}-${{ github.ref_name }}
+            type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:cache-${{ github.ref_name }},mode=max
           # 多平台构建优化参数
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             BUILDKIT_MULTI_PLATFORM=1
+            # 添加构建时间戳以便缓存管理
+            BUILD_DATE=${{ github.run_number }}
           # 构建器优化配置
           builder: ${{ steps.buildx.outputs.name }}
+          # 启用 provenance 和 SBOM 生成（安全性）
+          provenance: true
+          sbom: true
 
   # 快速测试作业（并行）
   quick-test:
@@ -118,16 +107,17 @@ jobs:
       - name: Checkout repository  
         uses: actions/checkout@v4
 
-      # 缓存测试环境
-      - name: Cache test environment
+      # 缓存 Docker 镜像和测试数据
+      - name: Cache Docker images and test data
         uses: actions/cache@v4
         with:
           path: |
-            /tmp/.buildx-cache
-            ~/.docker
-          key: test-env-${{ runner.os }}-${{ hashFiles('Dockerfile') }}
+            ~/.docker/config.json
+            /tmp/.docker-images-cache
+          key: test-docker-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ hashFiles('Dockerfile') }}
           restore-keys: |
-            test-env-${{ runner.os }}-
+            test-docker-${{ runner.os }}-${{ env.IMAGE_VERSION }}-
+            test-docker-${{ runner.os }}-
 
       - name: Set up QEMU and binfmt
         run: |
@@ -171,6 +161,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # 缓存测试环境和文档转换依赖
+      - name: Cache test environment and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.docker/config.json
+            /tmp/.docker-images-cache
+            /tmp/test-documents
+          key: full-test-${{ runner.os }}-${{ env.IMAGE_VERSION }}-${{ hashFiles('Dockerfile') }}
+          restore-keys: |
+            full-test-${{ runner.os }}-${{ env.IMAGE_VERSION }}-
+            full-test-${{ runner.os }}-
+            test-docker-${{ runner.os }}-
 
       - name: Set up QEMU and binfmt
         run: |
